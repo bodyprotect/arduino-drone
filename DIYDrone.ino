@@ -2,7 +2,7 @@
 #include "Arduino.h"
 #include "i2c.h"
 
-
+//hi
 /*
  * Command Define 
  * Bluetooth로 전송된 명령어에 대한 define
