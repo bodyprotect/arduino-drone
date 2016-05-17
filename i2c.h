@@ -1,5 +1,4 @@
-﻿#include <Arduino.h>
-#include "Adafruit_BMP085.h"
+#include <Arduino.h>
 #define I2C_PULLUPS_DISABLE PORTC &= ~(1<<4); PORTC &= ~(1<<5);
 #define ACC_1G 265
 #define MAG 1
@@ -10,9 +9,6 @@ static void Baro_init();
 static void Mag_init();
 static void ACC_init();
 
-Adafruit_BMP085 bmp;
-float altitudes[10];
-float totalAltitude = 0.0;
 
 int16_t  i2c_errors_count = 0;
 static uint8_t rawADC[6];
@@ -27,7 +23,7 @@ typedef struct {
 imu_t imu;
 int16_t gyroZero[3] = { 0,0,0 };
 uint8_t axis, tilt = 0;
-uint16_t calibratingA = 512;
+uint16_t calibratingA = 0;
 typedef struct {
 	uint8_t currentSet;
 	int16_t accZero[3];
@@ -88,6 +84,40 @@ typedef struct {
 #if MAG
 	int16_t mag_declination;
 #endif
+	
+#if defined(GYRO_SMOOTHING)
+	uint8_t Smoothing[3];
+#endif
+#if defined (FAILSAFE)
+	int16_t failsafe_throttle;
+#endif
+#ifdef VBAT
+	uint8_t vbatscale;
+	uint8_t vbatlevel_warn1;
+	uint8_t vbatlevel_warn2;
+	uint8_t vbatlevel_crit;
+#endif
+#ifdef POWERMETER
+	uint8_t pint2ma;
+#endif
+#ifdef POWERMETER_HARD
+	uint16_t psensornull;
+#endif
+#ifdef MMGYRO
+	uint8_t mmgyro;
+#endif
+#ifdef ARMEDTIMEWARNING
+	uint16_t armedtimewarning;
+#endif
+	int16_t minthrottle;
+#ifdef GOVERNOR_P
+	int16_t governorP;
+	int16_t governorD;
+#endif
+#ifdef YAW_COLL_PRECOMP
+	uint8_t yawCollPrecomp;
+	uint16_t yawCollPrecompDeadband;
+#endif
 	uint8_t  checksum;      // MUST BE ON LAST POSITION OF CONF STRUCTURE !
 } conf_t;
 conf_t conf;
@@ -100,15 +130,31 @@ typedef struct {
 	uint8_t HORIZON_MODE : 1;
 	uint8_t MAG_MODE : 1;
 	uint8_t BARO_MODE : 1;
-
+#ifdef HEADFREE
+	uint8_t HEADFREE_MODE : 1;
+#endif
+#if defined(FIXEDWING) || defined(HELICOPTER)
+	uint8_t PASSTHRU_MODE : 1;
+#endif
 	uint8_t SMALL_ANGLES_25 : 1;
 #if MAG
 	uint8_t CALIBRATE_MAG : 1;
 #endif
-
+#ifdef VARIOMETER
+	uint8_t VARIO_MODE : 1;
+#endif
 	uint8_t GPS_mode : 2;               // 0-3 NONE,HOLD, HOME, NAV (see GPS_MODE_* defines
-
-
+#if BARO || GPS
+	uint8_t THROTTLE_IGNORED : 1;      // If it is 1 then ignore throttle stick movements in baro mode;
+#endif
+#if GPS
+	uint8_t GPS_FIX : 1;
+	uint8_t GPS_FIX_HOME : 1;
+	uint8_t GPS_BARO_MODE : 1;         // This flag is used when GPS controls baro mode instead of user (it will replace rcOptions[BARO]
+	uint8_t GPS_head_set : 1;           // it is 1 if the navigation engine got commands to control heading (SET_POI or SET_HEAD) CLEAR_HEAD will zero it
+	uint8_t LAND_COMPLETED : 1;
+	uint8_t LAND_IN_PROGRESS : 1;
+#endif
 } flags_struct_t;
 flags_struct_t f;
 
@@ -464,25 +510,7 @@ void initS() {
   Gyro_init();
 	  Mag_init();
 	   ACC_init();
-	   
-	   bmp.begin(BMP085_ULTRAHIGHRES);
-}
-
-float getalt()
-{
-	static int index=0;
-	float alt;
-	totalAltitude = totalAltitude - altitudes[index];
-
-	altitudes[index] = bmp.readAltitude(101800);
-
-	totalAltitude += altitudes[index];
-
-	if (index >= 10)
-		index = 0;
-	alt = totalAltitude / 10;
-	return alt;
-
+	
 }
 
 void initSensors() {
@@ -494,376 +522,18 @@ void initSensors() {
 		if (i2c_errors_count == 0) break; // no error during init => init ok
 	}
 }
+
 double pangle=0, rangle=0;
 
 double getpitchangle(int16_t ac_x,int16_t ac_z, int16_t gy_y){
-	double deg1 = atan2(ac_x, ac_z) * 180 / PI;
+	double deg1 = atan2(abs(ac_x), abs(ac_z)) * 180 / PI;
 	/*double dgy_x = gy_y / 131;*/
 	pangle = (0.95*(pangle + (gy_y*0.001))) + (0.05*deg1);
 	return pangle;
 }
 
 double getrollangle(int16_t ac_y, int16_t ac_z, int16_t gy_x){
-	double deg2 = atan2(ac_y, ac_z) * 180 / PI;
+	double deg2 = atan2(abs(ac_y), abs(ac_z)) * 180 / PI;
 	rangle = (0.95*(rangle + (gy_x*0.001))) + (0.05*deg2);
 	return rangle;
 }
-
-float getheadingangle(int16_t xaxis, int16_t yaxis){
-	float heading = atan2(yaxis, xaxis);
-	// If you cannot find your Declination, comment out these two lines, your compass will be slightly off. 
-	  float declinationAngle = 0.0404;
-   heading += declinationAngle;
-
-
-		   // Correct for when signs are reversed. 
-		  if (heading < 0)
-		     heading += 2 * PI;
-	
-
-		   // Check for wrap due to addition of declination. 
-		   if (heading > 2 * PI)
-		     heading -= 2 * PI;
-		   float headingDegrees = heading * 180 / M_PI;
-		   return headingDegrees;
-
-}
-
-typedef struct  {
-	int32_t X, Y, Z;
-} t_int32_t_vector_def;
-
-typedef struct  {
-	uint16_t XL; int16_t X;
-	uint16_t YL; int16_t Y;
-	uint16_t ZL; int16_t Z;
-} t_int16_t_vector_def;
-
-static int16_t accZ = 0;
-typedef union {
-	int32_t A32[3];
-	t_int32_t_vector_def V32;
-	int16_t A16[6];
-	t_int16_t_vector_def V16;
-} t_int32_t_vector;
-
-#define GYRO_SCALE ((4.0f * PI * 70.0f)/(1000.0f * 180.0f * 1000000.0f)) // 70 milli deg/s /digit => 1 deg/s = 1000/70 LSB
-#define ACC_LPF_FACTOR 4 // that means a LPF of 16
-#define ACCZ_25deg   (int16_t)(ACC_1G * 0.90631) // 0.90631 = cos(25deg) (cos(theta) of accZ comparison)
-/* Set the Gyro Weight for Gyro/Acc complementary filter
-Increasing this value would reduce and delay Acc influence on the output of the filter*/
-#ifndef GYR_CMPF_FACTOR
-#define GYR_CMPF_FACTOR 10 //  that means a CMP_FACTOR of 1024 (2^10)
-#endif
-
-typedef struct {
-	int16_t angle[2];            // absolute angle inclination in multiple of 0.1 degree    180 deg = 1800
-	int16_t heading;             // variometer in cm/s
-} att_t;
-
-att_t att;
-
-/* Set the Gyro Weight for Gyro/Magnetometer complementary filter
-Increasing this value would reduce and delay Magnetometer influence on the output of the filter*/
-#define GYR_CMPFM_FACTOR 8 // that means a CMP_FACTOR of 256 (2^8)
-
-// signed16 * signed16
-// 22 cycles
-// http://mekonik.wordpress.com/2009/03/18/arduino-avr-gcc-multiplication/
-#define MultiS16X16to32(longRes, intIn1, intIn2) \
-asm volatile ( \
-"clr r26 \n\t" \
-"mul %A1, %A2 \n\t" \
-"movw %A0, r0 \n\t" \
-"muls %B1, %B2 \n\t" \
-"movw %C0, r0 \n\t" \
-"mulsu %B2, %A1 \n\t" \
-"sbc %D0, r26 \n\t" \
-"add %B0, r0 \n\t" \
-"adc %C0, r1 \n\t" \
-"adc %D0, r26 \n\t" \
-"mulsu %B1, %A2 \n\t" \
-"sbc %D0, r26 \n\t" \
-"add %B0, r0 \n\t" \
-"adc %C0, r1 \n\t" \
-"adc %D0, r26 \n\t" \
-"clr r1 \n\t" \
-: \
-"=&r" (longRes) \
-: \
-"a" (intIn1), \
-"a" (intIn2) \
-: \
-"r26" \
-)
-int32_t  __attribute__((noinline)) mul(int16_t a, int16_t b) {
-	int32_t r;
-	MultiS16X16to32(r, a, b);
-	//r = (int32_t)a*b; without asm requirement
-	return r;
-}
-
-//return angle , unit: 1/10 degree
-int16_t _atan2(int32_t y, int32_t x){
-	float z = y;
-	int16_t a;
-	uint8_t c;
-	c = abs(y) < abs(x);
-	if (c) { z = z / x; }
-	else { z = x / z; }
-	a = 2046.43 * (z / (3.5714 + z * z));
-	if (c){
-		if (x<0) {
-			if (y<0) a -= 1800;
-			else a += 1800;
-		}
-	}
-	else {
-		a = 900 - a;
-		if (y<0) a -= 1800;
-	}
-	return a;
-}
-
-float InvSqrt(float x){
-	union{
-		int32_t i;
-		float   f;
-	} conv;
-	conv.f = x;
-	conv.i = 0x5f1ffff9 - (conv.i >> 1);
-	return conv.f * (1.68191409f - 0.703952253f * x * conv.f * conv.f);
-}
-
-// Rotate Estimated vector(s) with small angle approximation, according to the gyro data
-void rotateV32(t_int32_t_vector *v, int16_t* delta) {
-	int16_t X = v->V16.X;
-	int16_t Y = v->V16.Y;
-	int16_t Z = v->V16.Z;
-
-	v->V32.Z -= mul(delta[ROLL], X) + mul(delta[PITCH], Y);
-	v->V32.X += mul(delta[ROLL], Z) - mul(delta[YAW], Y);
-	v->V32.Y += mul(delta[PITCH], Z) + mul(delta[YAW], X);
-}
-
-
-void getEstimatedAttitude(){
-	uint8_t axis;
-	int32_t accMag = 0;
-	float scale;
-	int16_t deltaGyroAngle16[3];
-	static t_int32_t_vector EstG = { 0, 0, (int32_t)ACC_1G << 16 };
-#if MAG
-	static t_int32_t_vector EstM;
-#endif
-	static uint32_t LPFAcc[3];
-	float invG; // 1/|G|
-	static int16_t accZoffset = 0;
-	int32_t accZ_tmp = 0;
-	static uint16_t previousT;
-	uint16_t currentT = micros();
-
-	// unit: radian per bit, scaled by 2^16 for further multiplication
-	// with a delta time of 3000 us, and GYRO scale of most gyros, scale = a little bit less than 1
-	scale = (currentT - previousT) * (GYRO_SCALE * 65536);
-	previousT = currentT;
-
-	// Initialization
-	for (axis = 0; axis < 3; axis++) {
-		// valid as long as LPF_FACTOR is less than 15
-		imu.accSmooth[axis] = LPFAcc[axis] >> ACC_LPF_FACTOR;
-		LPFAcc[axis] += imu.accADC[axis] - imu.accSmooth[axis];
-		// used to calculate later the magnitude of acc vector
-		accMag += mul(imu.accSmooth[axis], imu.accSmooth[axis]);
-		// unit: radian scaled by 2^16
-		// imu.gyroADC[axis] is 14 bit long, the scale factor ensure deltaGyroAngle16[axis] is still 14 bit long
-		deltaGyroAngle16[axis] = imu.gyroADC[axis] * scale;
-	}
-
-	// we rotate the intermediate 32 bit vector with the radian vector (deltaGyroAngle16), scaled by 2^16
-	// however, only the first 16 MSB of the 32 bit vector is used to compute the result
-	// it is ok to use this approximation as the 16 LSB are used only for the complementary filter part
-	rotateV32(&EstG, deltaGyroAngle16);
-	rotateV32(&EstM, deltaGyroAngle16);
-
-	// Apply complimentary filter (Gyro drift correction)
-	// If accel magnitude >1.15G or <0.85G and ACC vector outside of the limit range => we neutralize the effect of accelerometers in the angle estimation.
-	// To do that, we just skip filter, as EstV already rotated by Gyro
-	for (axis = 0; axis < 3; axis++) {
-		if ((int16_t)(0.85*ACC_1G*ACC_1G / 256) < (int16_t)(accMag >> 8) && (int16_t)(accMag >> 8) < (int16_t)(1.15*ACC_1G*ACC_1G / 256))
-			EstG.A32[axis] += (int32_t)(imu.accSmooth[axis] - EstG.A16[2 * axis + 1]) << (16 - GYR_CMPF_FACTOR);
-		accZ_tmp += mul(imu.accSmooth[axis], EstG.A16[2 * axis + 1]);
-#if MAG
-		EstM.A32[axis] += (int32_t)(imu.magADC[axis] - EstM.A16[2 * axis + 1]) << (16 - GYR_CMPFM_FACTOR);
-#endif
-	}
-
-	if (EstG.V16.Z > ACCZ_25deg)
-		f.SMALL_ANGLES_25 = 1;
-	else
-		f.SMALL_ANGLES_25 = 0;
-
-	// Attitude of the estimated vector
-	int32_t sqGX_sqGZ = mul(EstG.V16.X, EstG.V16.X) + mul(EstG.V16.Z, EstG.V16.Z);
-	invG = InvSqrt(sqGX_sqGZ + mul(EstG.V16.Y, EstG.V16.Y));
-	att.angle[ROLL] = _atan2(EstG.V16.X, EstG.V16.Z);
-	att.angle[PITCH] = _atan2(EstG.V16.Y, InvSqrt(sqGX_sqGZ)*sqGX_sqGZ);
-
-	//note on the second term: mathematically there is a risk of overflow (16*16*16=48 bits). assumed to be null with real values
-	att.heading = _atan2(
-		mul(EstM.V16.Z, EstG.V16.X) - mul(EstM.V16.X, EstG.V16.Z),
-		(EstM.V16.Y * sqGX_sqGZ - (mul(EstM.V16.X, EstG.V16.X) + mul(EstM.V16.Z, EstG.V16.Z)) * EstG.V16.Y)*invG);
-#if MAG
-	att.heading += conf.mag_declination; // Set from GUI
-#endif
-	att.heading /= 10;
-
-#if defined(THROTTLE_ANGLE_CORRECTION)
-	cosZ = mul(EstG.V16.Z, 100) / ACC_1G;                                                   // cos(angleZ) * 100 
-	throttleAngleCorrection = THROTTLE_ANGLE_CORRECTION * constrain(100 - cosZ, 0, 100) >> 3;  // 16 bit ok: 200*150 = 30000  
-#endif
-
-	// projection of ACC vector to global Z, with 1G subtructed
-	// Math: accZ = A * G / |G| - 1G
-	accZ = accZ_tmp *  invG;
-	if (!f.ARMED) {
-		accZoffset -= accZoffset >> 3;
-		accZoffset += accZ;
-	}
-	accZ -= accZoffset >> 3;
-}
-
-//// ************************************************************************************************************
-//// baro
-//// ************************************************************************************************************
-//int32_t baroPressure;
-//int16_t baroTemperature;
-//int32_t baroPressureSum;
-//#define UPDATE_INTERVAL 25000    // 40hz update rate (20hz LPF on acc)
-//#define BARO_TAB_SIZE   21
-//
-//#define ACC_Z_DEADBAND (ACC_1G>>5) // was 40 instead of 32 now
-//
-//
-//#define applyDeadband(value, deadband)  \
-//  if(abs(value) < deadband) {           \
-//    value = 0;                          \
-//    } else if(value > 0){                 \
-//    value -= deadband;                  \
-//  } else if(value < 0){                 \
-//    value += deadband;                  \
-//  }
-//
-//typedef struct {
-//	int32_t  EstAlt;             // in cm
-//	int16_t  vario;              // variometer in cm/s
-//} alt_t;
-//alt_t alt;
-//uint16_t previousTime = 0;
-//uint16_t cycleTime = 0;     // this is the number in micro second to achieve a full loop, it can differ a little and is taken into account in the PID loop
-//uint16_t calibratingB = 0;  // baro calibration = get new ground pressure value
-//int16_t  magHold, headFreeModeHold; // [-180;+180]
-//static int16_t accZ = 0;
-//int32_t  AltHold; // in cm
-//int16_t  sonarAlt;
-//int16_t  BaroPID = 0;
-//int16_t  errorAltitudeI = 0;
-//
-//// signed16 * signed16
-//// 22 cycles
-//// http://mekonik.wordpress.com/2009/03/18/arduino-avr-gcc-multiplication/
-//#define MultiS16X16to32(longRes, intIn1, intIn2) \
-//asm volatile ( \
-//"clr r26 \n\t" \
-//"mul %A1, %A2 \n\t" \
-//"movw %A0, r0 \n\t" \
-//"muls %B1, %B2 \n\t" \
-//"movw %C0, r0 \n\t" \
-//"mulsu %B2, %A1 \n\t" \
-//"sbc %D0, r26 \n\t" \
-//"add %B0, r0 \n\t" \
-//"adc %C0, r1 \n\t" \
-//"adc %D0, r26 \n\t" \
-//"mulsu %B1, %A2 \n\t" \
-//"sbc %D0, r26 \n\t" \
-//"add %B0, r0 \n\t" \
-//"adc %C0, r1 \n\t" \
-//"adc %D0, r26 \n\t" \
-//"clr r1 \n\t" \
-//: \
-//"=&r" (longRes) \
-//: \
-//"a" (intIn1), \
-//"a" (intIn2) \
-//: \
-//"r26" \
-//)
-//
-//int32_t  __attribute__((noinline)) mul(int16_t a, int16_t b) {
-//	int32_t r;
-//	MultiS16X16to32(r, a, b);
-//	//r = (int32_t)a*b; without asm requirement
-//	return r;
-//}
-//
-//#define ACC_VelScale (9.80665f / 10000.0f / ACC_1G)
-//
-//uint8_t getEstimatedAltitude(){
-//	int32_t  BaroAlt;
-//	static float baroGroundTemperatureScale, logBaroGroundPressureSum;
-//	static float vel = 0.0f;
-//	static uint16_t previousT;
-//	uint16_t currentT = micros();
-//	uint16_t dTime;
-//
-//	dTime = currentT - previousT;
-//	if (dTime < UPDATE_INTERVAL) return 0;
-//	previousT = currentT;
-//
-//	if (calibratingB > 0) {
-//		logBaroGroundPressureSum = log(baroPressureSum);
-//		baroGroundTemperatureScale = ((int32_t)baroTemperature + 27315) * (2 * 29.271267f); // 2 *  is included here => no need for * 2  on BaroAlt in additional LPF
-//		calibratingB--;
-//	}
-//
-//	// baroGroundPressureSum is not supposed to be 0 here
-//	// see: https://code.google.com/p/ardupilot-mega/source/browse/libraries/AP_Baro/AP_Baro.cpp
-//	BaroAlt = (logBaroGroundPressureSum - log(baroPressureSum)) * baroGroundTemperatureScale;
-//
-//	alt.EstAlt = (alt.EstAlt * 6 + BaroAlt) >> 3; // additional LPF to reduce baro noise (faster by 30 µs)
-//#if (defined(VARIOMETER) && (VARIOMETER != 2)) || !defined(SUPPRESS_BARO_ALTHOLD)
-//	//P
-//	int16_t error16 = constrain(AltHold - alt.EstAlt, -300, 300);
-//	applyDeadband(error16, 10); //remove small P parametr to reduce noise near zero position
-//	BaroPID = constrain((conf.pid[PIDALT].P8 * error16 >> 7), -150, +150);
-//
-//	//I
-//	errorAltitudeI += conf.pid[PIDALT].I8 * error16 >> 6;
-//	errorAltitudeI = constrain(errorAltitudeI, -30000, 30000);
-//	BaroPID += errorAltitudeI >> 9; //I in range +/-60
-//
-//	applyDeadband(accZ, ACC_Z_DEADBAND);
-//
-//	static int32_t lastBaroAlt;
-//	// could only overflow with a difference of 320m, which is highly improbable here
-//	int16_t baroVel = mul((alt.EstAlt - lastBaroAlt), (1000000 / UPDATE_INTERVAL));
-//
-//	lastBaroAlt = alt.EstAlt;
-//
-//	baroVel = constrain(baroVel, -300, 300); // constrain baro velocity +/- 300cm/s
-//	applyDeadband(baroVel, 10); // to reduce noise near zero
-//
-//	// Integrator - velocity, cm/sec
-//	vel += accZ * ACC_VelScale * dTime;
-//
-//	// apply Complimentary Filter to keep the calculated velocity based on baro velocity (i.e. near real velocity). 
-//	// By using CF it's possible to correct the drift of integrated accZ (velocity) without loosing the phase, i.e without delay
-//	vel = vel * 0.985f + baroVel * 0.015f;
-//
-//	//D
-//	alt.vario = vel;
-//	applyDeadband(alt.vario, 5);
-//	BaroPID -= constrain(conf.pid[PIDALT].D8 * alt.vario >> 4, -150, 150);
-//#endif
-//	return 1;
-//}
