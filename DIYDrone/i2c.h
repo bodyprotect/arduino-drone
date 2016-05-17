@@ -3,7 +3,7 @@
 #define I2C_PULLUPS_DISABLE PORTC &= ~(1<<4); PORTC &= ~(1<<5);
 #define ACC_1G 265
 #define MAG 1
-//hello
+//hello hi good night
 
 static void Device_Mag_getADC();
 static void Baro_init();
