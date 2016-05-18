@@ -2,7 +2,7 @@
 #include "Arduino.h"
 #include "i2c.h"
 
-
+//#define Adafruit
 void setup()
 {
 	Serial.begin(9600);
@@ -69,9 +69,10 @@ void loop()
 		//Serial.print(" pitchangle: ");
 		//Serial.print(pitchangle);
 
+#if defined(Adafruit)
 		Serial.print("\t alt : ");
 		Serial.println(getalt());
-		
+#endif
 
 		//Serial.print("yawangle: ");
 		//Serial.println(getheadingangle(imu.magADC[ROLL], imu.magADC[PITCH]));
