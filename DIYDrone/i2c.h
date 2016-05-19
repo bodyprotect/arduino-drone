@@ -4,7 +4,7 @@
 #define ACC_1G 265
 #define MAG 1
 #define ACC_VelScale (9.80665f / 10000.0f / ACC_1G)
-//16/5/19
+//hello hi good night
 
 static void Device_Mag_getADC();
 static void Baro_init();
@@ -19,7 +19,7 @@ float totalAltitude = 0.0;
 
 int16_t  i2c_errors_count = 0;
 static uint8_t rawADC[6];
-uint16_t calibratingG;
+
 typedef struct {
 	int16_t  accSmooth[3];
 	int16_t  gyroData[3];
@@ -31,6 +31,7 @@ imu_t imu;
 int16_t gyroZero[3] = { 0,0,0 };
 uint8_t axis, tilt = 0;
 uint16_t calibratingA = 512;
+uint16_t calibratingG = 512;
 uint16_t calibratingB = 200;
 typedef struct {
 	uint8_t currentSet;
@@ -96,6 +97,7 @@ typedef struct {
 } conf_t;
 conf_t conf;
 uint32_t currentTime = 0;
+uint16_t previousTime = 0;
 typedef struct {
 	uint8_t OK_TO_ARM : 1;
 	uint8_t ARMED : 1;

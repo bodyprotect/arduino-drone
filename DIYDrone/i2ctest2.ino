@@ -22,15 +22,20 @@ void loop()
 #define ACC_ORIENTATION(X, Y, Z)  {imu.accADC[ROLL]  = -X; imu.accADC[PITCH]  = -Y; imu.accADC[YAW]  =  Z;}
 #define GYRO_ORIENTATION(X, Y, Z) {imu.gyroADC[ROLL] =  Y; imu.gyroADC[PITCH] = -X; imu.gyroADC[YAW] = -Z;}
 #define MAG_ORIENTATION(X, Y, Z)  {imu.magADC[ROLL]  =  X; imu.magADC[PITCH]  =  Y; imu.magADC[YAW]  = -Z;}
+	
+	currentTime = micros();
+	previousTime = currentTime;
 	ACC_getADC();
 	Gyro_getADC();
 	Device_Mag_getADC();
 	getEstimatedAttitude();
+	Baro_update();
+	getEstimatedAltitude();
 	double rollangle = getrollangle(imu.accADC[PITCH], imu.accADC[YAW], imu.gyroADC[PITCH]);
 	double pitchangle = getpitchangle(imu.accADC[ROLL], imu.accADC[YAW], imu.gyroADC[ROLL]);
 
-	presenttime = millis();
-	dtime = presenttime - currenttime;
+	currenttime = millis();
+	dtime = currenttime - presenttime ;
 	if (dtime > 700)
 	{
 		Serial.print("ROLL angle :");
@@ -39,6 +44,8 @@ void loop()
 		Serial.print(att.angle[PITCH]);
 		Serial.print("\t heading :");
 		Serial.print(att.heading);
+		Serial.print("\t alt :");
+		Serial.print("");
 		
 		//Serial.print("Mag:");                         //magnetometer values
 		//Serial.print(imu.magADC[ROLL]);
@@ -71,13 +78,14 @@ void loop()
 
 #if defined(Adafruit)
 		Serial.print("\t alt : ");
-		Serial.println(getalt());
+		Serial.print(getalt());
 #endif
 
 		//Serial.print("yawangle: ");
-		//Serial.println(getheadingangle(imu.magADC[ROLL], imu.magADC[PITCH]));
+		//Serial.print(getheadingangle(imu.magADC[ROLL], imu.magADC[PITCH]));
 		
-		currenttime = presenttime;
+		Serial.println("");
+		presenttime = currenttime;
 	}
 
 	/*delay(1000);*/
