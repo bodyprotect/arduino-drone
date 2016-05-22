@@ -1,8 +1,10 @@
+//#define Baro1
+#define Adafruit
+
 #include <Wire.h>
 #include "Arduino.h"
 #include "i2c.h"
 
-//#define Adafruit
 void setup()
 {
 	Serial.begin(9600);
@@ -29,10 +31,12 @@ void loop()
 	Gyro_getADC();
 	Device_Mag_getADC();
 	getEstimatedAttitude();
+#if defined (Baro1)
 	Baro_update();
 	getEstimatedAltitude();
-	double rollangle = getrollangle(imu.accADC[PITCH], imu.accADC[YAW], imu.gyroADC[PITCH]);
-	double pitchangle = getpitchangle(imu.accADC[ROLL], imu.accADC[YAW], imu.gyroADC[ROLL]);
+#endif
+	//double rollangle = getrollangle(imu.accADC[PITCH], imu.accADC[YAW], imu.gyroADC[PITCH]);
+	//double pitchangle = getpitchangle(imu.accADC[ROLL], imu.accADC[YAW], imu.gyroADC[ROLL]);
 
 	currenttime = millis();
 	dtime = currenttime - presenttime ;
@@ -44,9 +48,13 @@ void loop()
 		Serial.print(att.angle[PITCH]);
 		Serial.print("\t heading :");
 		Serial.print(att.heading);
+#if defined(Baro1)
 		Serial.print("\t alt :");
-		Serial.print("");
-		
+		Serial.print(alt.EstAlt);
+   Serial.print("\t ve; :");
+   Serial.print(alt.vario);
+#endif
+   
 		//Serial.print("Mag:");                         //magnetometer values
 		//Serial.print(imu.magADC[ROLL]);
 		//Serial.print(',');
@@ -77,8 +85,9 @@ void loop()
 		//Serial.print(pitchangle);
 
 #if defined(Adafruit)
+getalt();
 		Serial.print("\t alt : ");
-		Serial.print(getalt());
+		Serial.print(totalAltitude);
 #endif
 
 		//Serial.print("yawangle: ");

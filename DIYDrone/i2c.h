@@ -12,7 +12,7 @@ static void Mag_init();
 static void ACC_init();
 
 #if defined(Adafruit)
-Adafruit_BMP085 bmp;
+extern Adafruit_BMP085 bmp;
 float altitudes[10];
 float totalAltitude = 0.0;
 #endif
@@ -476,7 +476,9 @@ static void Device_Mag_getADC() {
 void initS() {
 	i2c_init();
   Gyro_init();
+#if defined (Baro1)
   Baro_init();
+#endif
 	  Mag_init();
 	   ACC_init();
 	   
@@ -752,6 +754,7 @@ void getEstimatedAttitude(){
 	accZ -= accZoffset >> 3;
 }
 
+#if defined (Baro1)
 // ************************************************************************************************************
 // I2C Barometer BOSCH BMP085
 // ************************************************************************************************************
@@ -882,6 +885,24 @@ void  Baro_init() {
 	bmp085_ctx.deadline = currentTime + 5000;
 }
 
+
+#define UPDATE_INTERVAL 25000    // 40hz update rate (20hz LPF on acc)
+#define BARO_TAB_SIZE   21
+
+#define ACC_Z_DEADBAND (ACC_1G>>5) // was 40 instead of 32 now
+
+static void Baro_Common() {
+	static int32_t baroHistTab[BARO_TAB_SIZE];
+	static uint8_t baroHistIdx;
+
+	uint8_t indexplus1 = (baroHistIdx + 1);
+	if (indexplus1 == BARO_TAB_SIZE) indexplus1 = 0;
+	baroHistTab[baroHistIdx] = baroPressure;
+	baroPressureSum += baroHistTab[baroHistIdx];
+	baroPressureSum -= baroHistTab[indexplus1];
+	baroHistIdx = indexplus1;
+}
+
 //return 0: no data available, no computation ;  1: new value available  ; 2: no new value, but computation time
 uint8_t Baro_update() {                   // first UT conversion is started in init procedure
 	if (currentTime < bmp085_ctx.deadline) return 0;
@@ -903,23 +924,6 @@ uint8_t Baro_update() {                   // first UT conversion is started in i
 	}
 }
 
-
-#define UPDATE_INTERVAL 25000    // 40hz update rate (20hz LPF on acc)
-#define BARO_TAB_SIZE   21
-
-#define ACC_Z_DEADBAND (ACC_1G>>5) // was 40 instead of 32 now
-
-static void Baro_Common() {
-	static int32_t baroHistTab[BARO_TAB_SIZE];
-	static uint8_t baroHistIdx;
-
-	uint8_t indexplus1 = (baroHistIdx + 1);
-	if (indexplus1 == BARO_TAB_SIZE) indexplus1 = 0;
-	baroHistTab[baroHistIdx] = baroPressure;
-	baroPressureSum += baroHistTab[baroHistIdx];
-	baroPressureSum -= baroHistTab[indexplus1];
-	baroHistIdx = indexplus1;
-}
 
 #define applyDeadband(value, deadband)  \
   if(abs(value) < deadband) {           \
@@ -990,3 +994,5 @@ uint8_t getEstimatedAltitude(){
 #endif
 	return 1;
 }
+
+#endif
