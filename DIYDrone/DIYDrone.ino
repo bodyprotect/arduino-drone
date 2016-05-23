@@ -3,6 +3,7 @@
 #include "i2c.h"
 #include "string.h"
 
+//hi
 /*
  * Command Define 
  * Bluetooth로 전송된 명령어에 대한 define
