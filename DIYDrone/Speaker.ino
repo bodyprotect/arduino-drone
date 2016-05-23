@@ -1,55 +1,48 @@
-int speakerPin = 12;
-int D_Condition = 0;
+int speakerPin = 8;
 
 void speaker_initialize() {
   pinMode(speakerPin, OUTPUT);
+  //speaker_activate(GOOD);
 }
 
-void speaker_activate(int command)
+void speaker_activate(char command)
 {
+  int sound = 500;
+  int duration = 500;
   
-  switch(command){
-    case 0: //STOP NOISE
-      break;
-    
-    case 1: //Start Sound
-      tone(speakerPin, 500,500);
-      delay(300);
-      tone(speakerPin, 800,500);
-      delay(300);
-      tone(speakerPin, 1275,500);
-      delay(300);
-      tone(speakerPin, 1600,500);
-      D_Condition = 2;
+  switch(command)
+  {
+   
+    case GOOD :
+      sound = 500;
+      for(int i=0; i<4; i++)
+      {
+        tone(speakerPin, sound, duration);
+        sound += 500;
+        delay(duration * 1.30);  
+      }
       break;
 
-    case 2: //Good
-      delay(2000);
-      tone(speakerPin, 1500,500);
-      delay(2000);
+    case START : 
+      sound = 1000;
+      tone(speakerPin, sound, duration);
+      break;
+
+    case EXIT : 
+      sound = 300;
+      tone(speakerPin, sound, duration);
       break;
  
-    case 11: //error sound 1
-      tone(speakerPin, 2000,300);
-      delay(500);
+    case ERROR1 :
+      
       break;
 
-    case 12: //error sound 2
-      tone(speakerPin, 1300,200);
-      delay(200);
-      tone(speakerPin, 1250,300);
-      delay(500);
+    case ERROR2 : 
+     
       break;
 
-    case 13: //error sound 3
-      tone(speakerPin, 1000,200);
-      delay(400);
-      tone(speakerPin, 1000,200);
-      delay(400);
-      tone(speakerPin, 1000,200);
-      delay(400);
-      tone(speakerPin, 1000,200);
-      delay(3000);
+    case ERROR3 :
+      
       break;
   
   }

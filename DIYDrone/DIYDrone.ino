@@ -1,16 +1,18 @@
 #include <SoftwareSerial.h>
 #include "Arduino.h"
 #include "i2c.h"
+#include "string.h"
 
-//hi
 /*
  * Command Define 
  * Bluetooth로 전송된 명령어에 대한 define
  */
- #define START 1
- #define EXIT  2
-
-
+ #define START  's'
+ #define EXIT   'x'
+ #define GOOD   'g'
+ #define ERROR1 '1'
+ #define ERROR2 '2'
+ #define ERROR3 '3'
  
 /*
  * setup()
@@ -19,12 +21,10 @@
  */
 void setup()
 {
-  Serial.begin(9600);
   bluetooth_initialize();
   speaker_initialize();
   motor_initialize();
-  i2c_initialize();
-  
+  Serial.begin(9600);
 }
 
 /*
@@ -34,21 +34,20 @@ void setup()
  */
 void loop()
 {
-    /* Example Main Logic
-     * if(bluetooth.available())
+   char command = getCommand();
+    
+    switch(command)
     {
-        int command = bluetooth.read();
-
-        switch(command){
-
-          case START :
-              speaker_activate(START);
-              motor_activate(START);
-              break;
-
-          case EXIT :
-              speaker_activate(EXIT);
-              motor_activate(EXIT);
-          }
-    }*/
+      case START : 
+       Serial.println("motor_up");
+        speaker_activate(START);
+        motor_up();
+        break;
+        
+      case EXIT :
+      Serial.println("motor_down");
+      speaker_activate(EXIT);
+        motor_down();
+        break;
+    }
 }
