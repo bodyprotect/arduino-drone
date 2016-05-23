@@ -25,7 +25,7 @@ void motor_initialize(){
     break;
   }
   OCR1A=0;
-  OCR1B=100;
+  OCR1B=0;
   OCR0B=0;
   OCR2B=0;
 }
