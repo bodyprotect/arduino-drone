@@ -385,206 +385,11 @@ void annexCode() { // this code is excetuted at each loop and won't interfere wi
   tmp = (uint32_t)(tmp-MINCHECK)*2559/(2000-MINCHECK); // [MINCHECK;2000] -> [0;2559]
   tmp2 = tmp/256; // range [0;9]
   rcCommand[THROTTLE] = lookupThrottleRC[tmp2] + (tmp-tmp2*256) * (lookupThrottleRC[tmp2+1]-lookupThrottleRC[tmp2]) / 256; // [0;2559] -> expo -> [conf.minthrottle;MAXTHROTTLE]
-  #if defined(HEADFREE)
-    if(f.HEADFREE_MODE) { //to optimize
-      float radDiff = (att.heading - headFreeModeHold) * 0.0174533f; // where PI/180 ~= 0.0174533
-      float cosDiff = cos(radDiff);
-      float sinDiff = sin(radDiff);
-      int16_t rcCommand_PITCH = rcCommand[PITCH]*cosDiff + rcCommand[ROLL]*sinDiff;
-      rcCommand[ROLL] =  rcCommand[ROLL]*cosDiff - rcCommand[PITCH]*sinDiff; 
-      rcCommand[PITCH] = rcCommand_PITCH;
-    }
-  #endif
+
 
   // query at most one multiplexed analog channel per MWii cycle
   static uint8_t analogReader =0;
-  switch (analogReader++ % (3+VBAT_CELLS_NUM)) {
-  case 0:
-  {
-    #if defined(POWERMETER_HARD)
-      static uint32_t lastRead = currentTime;
-      static uint8_t ind = 0;
-      static uint16_t pvec[PSENSOR_SMOOTH], psum;
-      uint16_t p =  analogRead(PSENSORPIN);
-      //LCDprintInt16(p); LCDcrlf();
-      //debug[0] = p;
-      #if PSENSOR_SMOOTH != 1
-        psum += p;
-        psum -= pvec[ind];
-        pvec[ind++] = p;
-        ind %= PSENSOR_SMOOTH;
-        p = psum / PSENSOR_SMOOTH;
-      #endif
-      powerValue = ( conf.psensornull > p ? conf.psensornull - p : p - conf.psensornull); // do not use abs(), it would induce implicit cast to uint and overrun
-      analog.amperage = ((uint32_t)powerValue * conf.pint2ma) / 100; // [100mA]    //old (will overflow for 65A: powerValue * conf.pint2ma; // [1mA]
-      pMeter[PMOTOR_SUM] += ((currentTime-lastRead) * (uint32_t)((uint32_t)powerValue*conf.pint2ma))/100000; // [10 mA * msec]
-      lastRead = currentTime;
-    #endif // POWERMETER_HARD
-    break;
-  }
 
-  case 1:
-  {
-    #if defined(VBAT) && !defined(VBAT_CELLS)
-      static uint8_t ind = 0;
-      static uint16_t vvec[VBAT_SMOOTH], vsum;
-      uint16_t v = analogRead(V_BATPIN);
-      #if VBAT_SMOOTH == 1
-        analog.vbat = (v*VBAT_PRESCALER) / conf.vbatscale + VBAT_OFFSET; // result is Vbatt in 0.1V steps
-      #else
-        vsum += v;
-        vsum -= vvec[ind];
-        vvec[ind++] = v;
-        ind %= VBAT_SMOOTH;
-        #if VBAT_SMOOTH == VBAT_PRESCALER
-          analog.vbat = vsum / conf.vbatscale + VBAT_OFFSET; // result is Vbatt in 0.1V steps
-        #elif VBAT_SMOOTH < VBAT_PRESCALER
-          analog.vbat = (vsum * (VBAT_PRESCALER/VBAT_SMOOTH)) / conf.vbatscale + VBAT_OFFSET; // result is Vbatt in 0.1V steps
-        #else
-          analog.vbat = ((vsum /VBAT_SMOOTH) * VBAT_PRESCALER) / conf.vbatscale + VBAT_OFFSET; // result is Vbatt in 0.1V steps
-        #endif
-      #endif
-    #endif // VBAT
-    break;
-  }
-  case 2:
-  {
-  #if defined(RX_RSSI)
-    static uint8_t ind = 0;
-    static uint16_t rvec[RSSI_SMOOTH], rsum, r;
-
-    // http://www.multiwii.com/forum/viewtopic.php?f=8&t=5530
-    #if defined(RX_RSSI_CHAN)
-      uint16_t rssi_Input = constrain(rcData[RX_RSSI_CHAN],1000,2000);
-      r = map((uint16_t)rssi_Input , 1000, 2000, 0, 1023);
-    #else
-      r = analogRead(RX_RSSI_PIN);
-    #endif 
-
-    #if RSSI_SMOOTH == 1
-      analog.rssi = r;
-    #else
-      rsum += r;
-      rsum -= rvec[ind];
-      rvec[ind++] = r;
-      ind %= RSSI_SMOOTH;
-      r = rsum / RSSI_SMOOTH;
-      analog.rssi = r;
-    #endif
-   #endif // RX RSSI
-   break;
-  }
-  default: // here analogReader >=4, because of ++ in switch()
-  {
-    #if defined(VBAT) && defined(VBAT_CELLS)
-      if ( (analogReader<4) || (analogReader>4+VBAT_CELLS_NUM-1) ) break;
-      uint8_t ind = analogReader-4;
-      static uint16_t vbatcells_pins[VBAT_CELLS_NUM] = VBAT_CELLS_PINS;
-      static uint8_t  vbatcells_offset[VBAT_CELLS_NUM] = VBAT_CELLS_OFFSETS;
-      static uint8_t  vbatcells_div[VBAT_CELLS_NUM] = VBAT_CELLS_DIVS;
-      uint16_t v = analogRead(vbatcells_pins[ind]);
-      analog.vbatcells[ind] = vbatcells_offset[ind] + (v << 2) / vbatcells_div[ind]; // result is Vbatt in 0.1V steps
-      if (ind == VBAT_CELLS_NUM -1) analog.vbat = analog.vbatcells[ind];
-    #endif // VBAT) && defined(VBAT_CELLS)
-    break;
-  } // end default
-  } // end of switch()
-
-#if defined( POWERMETER_HARD ) && (defined(LOG_VALUES) || defined(LCD_TELEMETRY))
-  if (analog.amperage > powerValueMaxMAH) powerValueMaxMAH = analog.amperage;
-#endif
-
-#if defined(WATTS)
-  analog.watts = (analog.amperage * analog.vbat) / 100; // [0.1A] * [0.1V] / 100 = [Watt]
-  #if defined(LOG_VALUES) || defined(LCD_TELEMETRY)
-    if (analog.watts > wattsMax) wattsMax = analog.watts;
-  #endif
-#endif
-
-  #if defined(BUZZER)
-    alarmHandler(); // external buzzer routine that handles buzzer events globally now
-  #endif
-
-
-  if ( (calibratingA>0 && ACC ) || (calibratingG>0) ) { // Calibration phasis
-    LEDPIN_TOGGLE;
-  } else {
-    if (f.ACC_CALIBRATED) {LEDPIN_OFF;}
-    if (f.ARMED) {LEDPIN_ON;}
-  }
-
-  #if defined(LED_RING)
-    static uint32_t LEDTime;
-    if ( currentTime > LEDTime ) {
-      LEDTime = currentTime + 50000;
-      i2CLedRingState();
-    }
-  #endif
-
-  #if defined(LED_FLASHER)
-    auto_switch_led_flasher();
-  #endif
-
-  if ( currentTime > calibratedAccTime ) {
-    if (! f.SMALL_ANGLES_25) {
-      // the multi uses ACC and is not calibrated or is too much inclinated
-      f.ACC_CALIBRATED = 0;
-      LEDPIN_TOGGLE;
-      calibratedAccTime = currentTime + 100000;
-    } else {
-      f.ACC_CALIBRATED = 1;
-    }
-  }
-
-  #if !(defined(SERIAL_RX) && defined(PROMINI))  //Only one serial port on ProMini.  Skip serial com if SERIAL RX in use. Note: Spek code will auto-call serialCom if GUI data detected on serial0.
-    serialCom();
-  #endif
-
-  #if defined(POWERMETER)
-    analog.intPowerMeterSum = (pMeter[PMOTOR_SUM]/PLEVELDIV);
-    intPowerTrigger1 = conf.powerTrigger1 * PLEVELSCALE; 
-  #endif
-
-  #ifdef LCD_TELEMETRY_AUTO
-    static char telemetryAutoSequence []  = LCD_TELEMETRY_AUTO;
-    static uint8_t telemetryAutoIndex = 0;
-    static uint16_t telemetryAutoTimer = 0;
-    if ( (telemetry_auto) && (! (++telemetryAutoTimer % LCD_TELEMETRY_AUTO_FREQ) )  ){
-      telemetry = telemetryAutoSequence[++telemetryAutoIndex % strlen(telemetryAutoSequence)];
-      LCDclear(); // make sure to clear away remnants
-    }
-  #endif  
-  #ifdef LCD_TELEMETRY
-    static uint16_t telemetryTimer = 0;
-    if (! (++telemetryTimer % LCD_TELEMETRY_FREQ)) {
-      #if (LCD_TELEMETRY_DEBUG+0 > 0)
-        telemetry = LCD_TELEMETRY_DEBUG;
-      #endif
-      if (telemetry) lcd_telemetry();
-    }
-  #endif
-
-
-  #if defined(LOG_VALUES) && (LOG_VALUES >= 2)
-    if (cycleTime > cycleTimeMax) cycleTimeMax = cycleTime; // remember highscore
-    if (cycleTime < cycleTimeMin) cycleTimeMin = cycleTime; // remember lowscore
-  #endif
-  if (f.ARMED)  {
-    #if defined(LCD_TELEMETRY) || defined(ARMEDTIMEWARNING) || defined(LOG_PERMANENT)
-      armedTime += (uint32_t)cycleTime;
-    #endif
-    #if defined(VBAT)
-      if ( (analog.vbat > NO_VBAT) && (analog.vbat < vbatMin) ) vbatMin = analog.vbat;
-    #endif
-    #ifdef LCD_TELEMETRY
-      #if BARO
-        if ( (alt.EstAlt > BAROaltMax) ) BAROaltMax = alt.EstAlt;
-      #endif
-      #if GPS
-        if ( (GPS_speed > GPS_speedMax) ) GPS_speedMax = GPS_speed;
-      #endif
-    #endif
-  }
 }
 
 // ************************
@@ -703,9 +508,6 @@ void go_arm() {
   #endif
   #if defined(FAILSAFE)
     && failsafeCnt < 2
-  #endif
-  #if GPS && defined(ONLY_ALLOW_ARM_WITH_GPS_3DFIX)
-    && (f.GPS_FIX && GPS_numSat >= 5)
   #endif
     ) {
     if(!f.ARMED && !f.BARO_MODE) { // arm now!
@@ -1017,9 +819,6 @@ void loop () {
     #endif
 
     if (rcOptions[BOXARM] == 0) f.OK_TO_ARM = 1;
-    #if !defined(GPS_LED_INDICATOR)
-      if (f.ANGLE_MODE || f.HORIZON_MODE) {STABLEPIN_ON;} else {STABLEPIN_OFF;}
-    #endif
 
     #if BARO
       #if (!defined(SUPPRESS_BARO_ALTHOLD))

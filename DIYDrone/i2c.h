@@ -33,6 +33,7 @@ uint8_t axis, tilt = 0;
 uint16_t calibratingA = 512;
 uint16_t calibratingG = 512;
 uint16_t calibratingB = 200;
+int16_t axisPID[3];
 typedef struct {
 	uint8_t currentSet;
 	int16_t accZero[3];
@@ -96,6 +97,26 @@ typedef struct {
 	uint8_t  checksum;      // MUST BE ON LAST POSITION OF CONF STRUCTURE !
 } conf_t;
 conf_t conf;
+uint16_t cycleTime = 0;
+
+// ************************************************************************************************************
+// PID value PID_CONTROLLER == 2
+// ************************************************************************************************************
+void LoadDefaults() {
+	conf.pid[ROLL].P8 = 28; conf.pid[ROLL].I8 = 10; conf.pid[ROLL].D8 = 7;
+	conf.pid[PITCH].P8 = 28; conf.pid[PITCH].I8 = 10; conf.pid[PITCH].D8 = 7;
+	conf.pid[PIDLEVEL].P8 = 30; conf.pid[PIDLEVEL].I8 = 32; conf.pid[PIDLEVEL].D8 = 0;
+	conf.pid[YAW].P8 = 68;  conf.pid[YAW].I8 = 45;  conf.pid[YAW].D8 = 0;
+	conf.pid[PIDALT].P8 = 64; conf.pid[PIDALT].I8 = 25; conf.pid[PIDALT].D8 = 24;
+#if defined (GPS)
+	conf.pid[PIDPOS].P8 = POSHOLD_P * 100;     conf.pid[PIDPOS].I8 = POSHOLD_I * 100;       conf.pid[PIDPOS].D8 = 0;
+	conf.pid[PIDPOSR].P8 = POSHOLD_RATE_P * 10; conf.pid[PIDPOSR].I8 = POSHOLD_RATE_I * 100;  conf.pid[PIDPOSR].D8 = POSHOLD_RATE_D * 1000;
+	conf.pid[PIDNAVR].P8 = NAV_P * 10;          conf.pid[PIDNAVR].I8 = NAV_I * 100;           conf.pid[PIDNAVR].D8 = NAV_D * 1000;
+#endif
+	conf.pid[PIDMAG].P8 = 40;
+
+	conf.pid[PIDVEL].P8 = 0;      conf.pid[PIDVEL].I8 = 0;    conf.pid[PIDVEL].D8 = 0;
+}
 uint32_t currentTime = 0;
 uint16_t previousTime = 0;
 typedef struct {
@@ -996,3 +1017,113 @@ uint8_t getEstimatedAltitude(){
 }
 
 #endif
+
+
+void computeIMU() {
+	uint8_t axis;
+	static int16_t gyroADCprevious[3] = { 0, 0, 0 };
+	static int16_t gyroADCinter[3];
+
+	uint16_t timeInterleave = 0;
+
+	for (axis = 0; axis < 3; axis++)
+		gyroADCinter[axis] = imu.gyroADC[axis];
+	timeInterleave = micros();
+	uint8_t t = 0;
+	while ((int16_t)(micros() - timeInterleave)<650) t = 1; //empirical, interleaving delay between 2 consecutive reads
+
+	Gyro_getADC();
+
+	for (axis = 0; axis < 3; axis++) {
+		gyroADCinter[axis] = imu.gyroADC[axis] + gyroADCinter[axis];
+		// empirical, we take a weighted value of the current and the previous values
+		imu.gyroData[axis] = (gyroADCinter[axis] + gyroADCprevious[axis]) / 3;
+		gyroADCprevious[axis] = gyroADCinter[axis] >> 1;
+	}
+#if defined(GYRO_SMOOTHING)
+	static int16_t gyroSmooth[3] = { 0, 0, 0 };
+	for (axis = 0; axis < 3; axis++) {
+		imu.gyroData[axis] = (int16_t)(((int32_t)((int32_t)gyroSmooth[axis] * (conf.Smoothing[axis] - 1)) + imu.gyroData[axis] + 1) / conf.Smoothing[axis]);
+		gyroSmooth[axis] = imu.gyroData[axis];
+	}
+#elif defined(TRI)
+	static int16_t gyroYawSmooth = 0;
+	imu.gyroData[YAW] = (gyroYawSmooth * 2 + imu.gyroData[YAW]) / 3;
+	gyroYawSmooth = imu.gyroData[YAW];
+#endif
+}
+
+// ************************************************************************************************************
+// **** PITCH & ROLL & YAW PID ****
+// ************************************************************************************************************
+
+void getPID(){
+
+#define GYRO_I_MAX 256
+#define ACC_I_MAX 256
+	int16_t error, errorAngle;
+	int16_t AngleRateTmp, RateError;
+	int16_t PTerm = 0, ITerm = 0, DTerm, PTermACC, ITermACC;
+	static int32_t errorGyroI[3] = { 0, 0, 0 };
+	static int16_t lastError[3] = { 0, 0, 0 };
+	static int16_t delta1[3], delta2[3];
+	int16_t delta;
+	int16_t deltaSum;
+	//int32_t prop = 0;
+	//prop = min(max(abs(rcCommand[PITCH]), abs(rcCommand[ROLL])), 500); // range [0;500]
+
+	//----------PID controller----------
+	for (axis = 0; axis < 3; axis++) {
+		//-----Get the desired angle rate depending on flight mode
+		if ((f.ANGLE_MODE || f.HORIZON_MODE) && axis < 2) { // MODE relying on ACC
+			// calculate error and limit the angle to 50 degrees max inclination
+			errorAngle = att.angle[axis] + conf.angleTrim[axis]; //16 bits is ok here
+		}
+		if (axis == 2) {//YAW is always gyro-controlled (MAG correction is applied to rcCommand)
+			AngleRateTmp = (((int32_t)(conf.yawRate + 27)) >> 5);
+		}
+		else {
+				//it's the ANGLE mode - control is angle based, so control loop is needed
+				AngleRateTmp = ((int32_t)errorAngle * conf.pid[PIDLEVEL].P8) >> 4;
+			 }
+
+		//--------low-level gyro-based PID. ----------
+		//Used in stand-alone mode for ACRO, controlled by higher level regulators in other modes
+		//-----calculate scaled error.AngleRates
+		//multiplication of rcCommand corresponds to changing the sticks scaling here
+		RateError = AngleRateTmp - imu.gyroData[axis];
+
+		//-----calculate P component
+		PTerm = ((int32_t)RateError * conf.pid[axis].P8) >> 7;
+
+		//-----calculate I component
+		//there should be no division before accumulating the error to integrator, because the precision would be reduced.
+		//Precision is critical, as I prevents from long-time drift. Thus, 32 bits integrator is used.
+		//Time correction (to avoid different I scaling for different builds based on average cycle time)
+		//is normalized to cycle time = 2048.
+		errorGyroI[axis] += (((int32_t)RateError * cycleTime) >> 11) * conf.pid[axis].I8;
+		//limit maximum integrator value to prevent WindUp - accumulating extreme values when system is saturated.
+		//I coefficient (I8) moved before integration to make limiting independent from PID settings
+		errorGyroI[axis] = constrain(errorGyroI[axis], (int32_t)-GYRO_I_MAX << 13, (int32_t)+GYRO_I_MAX << 13);
+		ITerm = errorGyroI[axis] >> 13;
+
+		//-----calculate D-term
+		delta = RateError - lastError[axis];  // 16 bits is ok here, the dif between 2 consecutive gyro reads is limited to 800
+		lastError[axis] = RateError;
+
+		//Correct difference by cycle time. Cycle time is jittery (can be different 2 times), so calculated difference
+		// would be scaled by different dt each time. Division by dT fixes that.
+		delta = ((int32_t)delta * ((uint16_t)0xFFFF / (cycleTime >> 4))) >> 6;
+		//add moving average here to reduce noise
+		deltaSum = delta1[axis] + delta2[axis] + delta;
+		delta2[axis] = delta1[axis];
+		delta1[axis] = delta;
+
+		//DTerm = (deltaSum*conf.pid[axis].D8)>>8;
+		//Solve overflow in calculation above...
+		DTerm = ((int32_t)deltaSum*conf.pid[axis].D8) >> 8;
+		//-----calculate total PID output
+		axisPID[axis] = PTerm + ITerm + DTerm;
+	}
+
+}
