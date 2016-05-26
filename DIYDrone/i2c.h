@@ -1127,3 +1127,29 @@ void getPID(){
 	}
 
 }
+
+void getPID2() {
+
+	int16_t error, error_previous;
+	int16_t AngleRateTmp, RateError;
+	int16_t PTerm = 0, ITerm = 0, DTerm, PTermACC, ITermACC;
+	static int32_t errorGyroI[3] = { 0, 0, 0 };
+	static int16_t lastError[3] = { 0, 0, 0 };
+	static int16_t delta1[3], delta2[3];
+	int16_t delta;
+	int16_t deltaSum;
+	int16_t Kp, Ki, Kd;
+
+	for (axis = 0; axis < 3; axis++) {
+		error = att.angle[axis] + conf.angleTrim[axis];
+
+		PTerm = Kp * error;
+		ITerm += Ki * error * cycleTime;
+		DTerm = Kd * (error - error_previous) / cycleTime;
+
+		axisPID[axis] = PTerm + ITerm + DTerm;
+		axisPID[axis] = constrain(axisPID[axis], -255, 255);
+		
+		error_previous = error;
+	}
+}
